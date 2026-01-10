@@ -1,0 +1,141 @@
+name: Release SDL3
+on:
+  workflow_dispatch:
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  release:
+    name: Release ${{ matrix.platform.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux-arm64
+            arch: arm64
+            agent: ubuntu-latest
+            container: arm64v8/ubuntu:24.04
+            flags: -GNinja -DSDL_X11_XTEST=OFF -DSDL_OPENGL=ON -DSDL_VULKAN=ON
+          - name: linux-x64
+            arch: x64
+            agent: ubuntu-latest
+            flags: -GNinja -DSDL_X11_XTEST=OFF -DSDL_OPENGL=ON -DSDL_VULKAN=ON
+          - name: win-arm64
+            arch: arm64
+            agent: windows-latest
+            flags: -DSDL_OPENGL=ON -DSDL_VULKAN=ON -DSDL_RENDER_D3D11=ON -DSDL_RENDER_D3D12=ON -DSDL_GPU_D3D12=ON -A ARM64
+          - name: win-x64
+            arch: x64
+            agent: windows-latest
+            flags: -DSDL_OPENGL=ON -DSDL_VULKAN=ON -DSDL_RENDER_D3D11=ON -DSDL_RENDER_D3D12=ON -DSDL_GPU_D3D12=ON -A x64
+          - name: wasm32
+            arch: wasm32
+            agent: ubuntu-latest
+            container: emscripten/emsdk:3.1.57
+            flags: >-
+              -DSDL_WASM=ON
+              -DSDL_OPENGLES=ON
+              -DSDL_OPENGL=OFF
+              -DSDL_VULKAN=OFF
+              -DSDL_RENDER_METAL=OFF
+              -DSDL_RENDER_D3D11=OFF
+              -DSDL_RENDER_D3D12=OFF
+              -DSDL_GPU_D3D12=OFF
+              -DSDL_TESTS=OFF
+              -DSDL_X11=OFF
+              -DSDL_WAYLAND=OFF
+              -DSDL_KMSDRM=OFF
+              -DSDL_PIPEWIRE=OFF
+              -DSDL_V4L2=OFF
+              -DSDL_HIDAPI=OFF
+              -DSDL_JOYSTICK_LINUX=OFF
+              -DSDL_CAMERA_V4L2=OFF
+              -DSDL_VIDEODRIVER_DUMMY=ON
+
+    runs-on: ${{ matrix.platform.agent }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Enable QEMU for ARM64
+        if: ${{ matrix.platform.container != '' && matrix.platform.arch == 'arm64' }}
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Cache APT
+        if: ${{ startsWith(matrix.platform.name, 'linux') }}
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/apt/cache
+            .cache/apt/lists
+          key: apt-${{ runner.os }}-${{ matrix.platform.name }}-${{ hashFiles('**/apt-packages.txt') }}
+          restore-keys: |
+            apt-${{ runner.os }}-${{ matrix.platform.name }}-
+
+      - name: Install deps
+        if: ${{ startsWith(matrix.platform.name, 'linux') && matrix.platform.arch == 'x64' }}
+        run: |
+          sudo apt-get update -o Acquire::CompressionTypes::Order::=gz
+          sudo apt-get install -y --no-install-recommends $(cat apt-packages.txt)
+
+      - name: Build
+        if: ${{ matrix.platform.container == '' }}
+        shell: bash
+        run: |
+          chmod +x ./.github/scripts/build.sh && \
+          ./.github/scripts/build.sh \
+            "${{ matrix.platform.name }}" \
+            "${{ github.workspace }}/install/${{ matrix.platform.name }}" \
+            "${{ env.BUILD_TYPE }}" \
+            "${{ matrix.platform.flags }}"
+
+      - name: Build
+        if: ${{ matrix.platform.container != '' && matrix.platform.name == 'linux-arm64' }}
+        run: |
+          mkdir -p .cache/apt/cache
+          mkdir -p .cache/apt/lists
+          docker run --rm \
+            --mount type=bind,source="${{ github.workspace }}/.cache/apt/cache",target=/var/cache/apt \
+            --mount type=bind,source="${{ github.workspace }}/.cache/apt/lists",target=/var/lib/apt/lists \
+            --platform linux/${{ matrix.platform.arch }} \
+            -v "${{ github.workspace }}:/src" \
+            -w /src \
+            ${{ matrix.platform.container }} \
+            bash -c "
+              apt-get update -o Acquire::CompressionTypes::Order::=gz &&
+              xargs -a apt-packages.txt apt-get install -y --no-install-recommends &&
+              chmod +x ./.github/scripts/build.sh &&
+              ./.github/scripts/build.sh \
+                '${{ matrix.platform.name }}' \
+                '/src/install/${{ matrix.platform.name }}' \
+                '${{ env.BUILD_TYPE }}' \
+                '${{ matrix.platform.flags }}'
+            "
+
+      - name: Build
+        if: ${{ matrix.platform.container != '' && matrix.platform.arch == 'wasm32' }}
+        run: |
+          docker run --rm \
+            --platform linux/amd64 \
+            -v "${{ github.workspace }}:/src" \
+            -w /src \
+            emscripten/emsdk:3.1.57 \
+            bash -c "
+              chmod +x ./.github/scripts/build.sh &&
+              ./.github/scripts/build.sh \
+                '${{ matrix.platform.name }}' \
+                '/src/install/${{ matrix.platform.name }}' \
+                '${{ env.BUILD_TYPE }}' \
+                '${{ matrix.platform.flags }}'
+            "
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SDL3-${{ matrix.platform.name }}
+          path: install/${{ matrix.platform.name }}
