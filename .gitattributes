@@ -1,0 +1,4 @@
+# Shell scripts must keep LF endings (bash under WSL/Linux)
+*.sh text eol=lf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

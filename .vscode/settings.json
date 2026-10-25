@@ -1,0 +1,14 @@
+{
+    "cSpell.ignoreRegExpList": [
+        "lib.*",
+        "-D.*"
+    ],
+    "cSpell.ignoreWords": [
+        "emcmake",
+        "emscripten",
+        "emsdk",
+        "dpkg",
+        "github",
+        "linux"
+    ]
+}
